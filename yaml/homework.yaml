@@ -1,0 +1,213 @@
+---
+- name: Prepare GUID environment variable across all hosts
+  hosts: all
+  tasks:
+    - name: All GUID env variable
+      shell: export GUID=`hostname | cut -d"." -f2`; echo "export GUID=$GUID" >> $HOME/.bashrc
+
+- name: Verify Installation and Configuration of Docker
+  hosts: nodes
+  tasks:
+    - name: docker restart
+      shell: systemctl restart docker
+
+- name: Verify NFS Shared Volumes on Hosts
+  hosts: nfs
+  tasks:
+    - name: List NFS Shared Volumes
+      shell: exportfs
+
+- name: Install packages and config auth
+  hosts: localhost
+  tasks:
+    - name: required packages are present
+      yum:
+        name:
+          - openshift-ansible
+          - atomic-openshift-clients
+        state: present
+
+- name: Generate Inventory Hosts File
+  hosts: localhost
+  tasks:
+    - name: Generate Inventory script
+      script: /root/rhocp_homework/scripts/generate_inventory.sh
+
+- name: Execute the openshift-ansible prerequisites
+  import_playbook: /usr/share/ansible/openshift-ansible/playbooks/prerequisites.yml
+
+- name: Execute the openshift-ansible Deployer
+  import_playbook: /usr/share/ansible/openshift-ansible/playbooks/deploy_cluster.yml
+
+- name: Verify OpenShift Cluster
+  hosts: masters[0]
+  tasks:
+    - name: copy the .kube directory from master1 to your bastion
+      fetch:
+        src: /root/.kube/config
+        dest: /root/.kube/config
+        flat: yes
+        
+- name: Post installation configuration
+  hosts: localhost
+  tasks:
+    - name: Verify logged in User is system:dmin
+      shell: oc whoami | grep system:admin
+
+- name: Create PVs
+  hosts: nfs
+  tasks:
+    - name: Create PV directories
+      script: /root/rhocp_homework/scripts/create_pvs.sh
+
+- name: Restart nfs-server
+  hosts: nfs
+  tasks:
+    - name: Restarting NFS Server...
+      shell: systemctl restart nfs-server
+
+- name: Create 25 definitions files for PVs 5G size
+  hosts: localhost
+  tasks:
+    - name: Create ReadWriteOnce PV definitions
+      script: /root/rhocp_homework/scripts/pvs_5Gsize.sh
+
+- name: Create 25 definitions files for PVs 10G size
+  hosts: localhost
+  tasks:
+    - name: Create ReadWriteMany PV definitions
+      script: /root/rhocp_homework/scripts/pvs_10Gsize.sh
+
+- name: Create all PVs from definitions files
+  hosts: localhost
+  tasks:
+    - name: Create all defined PVs
+      shell: cat /root/pvs/* | oc create -f -
+
+- name: Set NFS Persistent Volume Recycling
+  hosts: nodes
+  tasks:
+    - name: Pull Latest OSE-Recycler Image
+      shell: docker pull registry.access.redhat.com/openshift3/ose-recycler:latest
+    - name: Tag OSE-Recycler Image
+      shell: docker tag registry.access.redhat.com/openshift3/ose-recycler:latest registry.access.redhat.com/openshift3/ose-recycler:v3.11.16
+
+- name: Add admin user
+  hosts: masters
+  tasks:
+    - name: Creating user admin
+      shell: htpasswd -b /etc/origin/master/htpasswd admin r3dh4t1! 
+
+- name: Add admin policy
+  hosts: localhost
+  tasks:
+    - name: Add admin to cluster-admin role 
+      shell: oc adm policy add-cluster-role-to-user cluster-admin admin
+
+- name: Smoke Test
+  hosts: localhost
+  tasks:
+    - name: Create a Smoke Test Application
+      script: /root/rhocp_homework/scripts/nodejs_mongo_app.sh
+
+- name: Pipeline Setup
+  hosts: localhost
+  tasks:
+    - name: pipeline setup
+      script: /root/rhocp_homework/scripts/cicd.sh 
+
+- name: Create users
+  hosts: masters
+  tasks:
+    - name: Creating users in Master htpasswd file 
+      command: "htpasswd -b /etc/origin/master/htpasswd {{ item }}"
+      with_items:
+        - Amy r3dh4t1! 
+        - Andrew r3dh4t1! 
+        - Brian r3dh4t1! 
+        - Betty r3dh4t1! 
+        - Chris r3dh4t1! 
+        - Cody r3dh4t1! 
+
+- name: Setting default and project-request 
+  hosts: localhost
+  tasks:
+    - name: Label default project
+      shell: oc label namespace default name=default
+    - name: Apply project request
+      shell: oc project default; oc apply -f /root/rhocp_homework/yaml/project-request.yaml
+
+- name: Set defaults for new projects
+  hosts: masters
+  tasks:
+    - name: Set project request template as default
+      replace:
+        path: /etc/origin/master/master-config.yaml
+        regexp: "projectRequestTemplate: ''"
+        replace: "projectRequestTemplate: \"default/project-request\""
+        backup: yes
+
+- name: Restart master api and controllera
+  hosts: masters
+  tasks:
+    - name: Restart masters api and controllers
+      command: "/usr/local/bin/master-restart {{ item }}"
+      with_items:
+        - api
+        - controllers
+      retries: 10
+      delay: 10
+      register: result
+      until: result.rc == 0
+
+- name: Setting project configs
+  hosts: localhost
+  tasks:
+    - name: Creating client projects
+      command: "oc adm new-project {{ item }}"
+      with_items:
+        - alpha-project  --display-name="Alpha Corp." --node-selector='client=alpha-corp'
+        - beta-project  --display-name="Beta Corp." --node-selector='client=beta-corp'
+        - common --display-name="Common"
+      retries: 3 
+      delay: 5
+      register: result
+      until: result.rc == 0
+    - name: Creating users in openshift 
+      command: "oc create user {{ item }}"
+      with_items:
+        - Amy
+        - Andrew
+        - Brian
+        - Betty
+        - Chris
+        - Cody
+    - name: Creating groups with users 
+      command: "oc adm groups new {{ item }}"
+      with_items:
+        - alpha-corp Amy Andrew
+        - beta-corp Betty Brian
+        - common Chris Cody
+    - name: Creating labels
+      command: "oc label {{ item }}"
+      with_items:
+        - group/alpha-corp client=alpha-corp
+        - group/beta-corp client=beta-corp
+        - group/common client=common
+    - name: Creating user labels
+      command: "oc label user {{ item }}"
+      with_items:
+        - Amy client=alpha-corp
+        - Andrew client=alpha-corp
+        - Betty client=beta-corp
+        - Brian client=beta-corp
+        - Chris client=common
+        - Cody client=common
+    - name: Adding admin role to group for project
+      command: "oadm policy add-role-to-group admin {{ item }}"
+      with_items:
+        - alpha-corp -n alpha-project
+        - beta-corp -n beta-project
+        - common -n common
+    - name: Remove self-provisioner role
+      shell: oc adm policy remove-cluster-role-from-group self-provisioner system:authenticated:oauth

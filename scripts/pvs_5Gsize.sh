@@ -1,15 +1,26 @@
-export GUID=`hostname|awk -F. '{print $2}'`
-echo "export GUID=$GUID" >> ~/.bashrc
-echo $GUID
+export volsize="5Gi"
+mkdir -p /root/pvs
 
-ssh support1.$GUID.internal
-sudo -i
-mkdir -p /srv/nfs/user-vols/pv{1..200}
-
-for pvnum in {1..50} ; do
-echo /srv/nfs/user-vols/pv${pvnum} *(rw,root_squash) >> /etc/exports.d/openshift-uservols.exports
-chown -R nfsnobody.nfsnobody  /srv/nfs
-chmod -R 777 /srv/nfs
+for volume in pv{1..25}; do
+cat << EOF > /root/pvs/${volume}
+{
+  "apiVersion": "v1",
+  "kind": "PersistentVolume",
+  "metadata": {
+    "name": "${volume}"
+  },
+  "spec": {
+    "capacity": {
+      "storage": "${volsize}"
+    },
+    "accessModes": [ "ReadWriteOnce" ],
+    "nfs": {
+      "path": "/srv/nfs/user-vols/${volume}",
+      "server": "support1.${GUID}.internal"
+    },
+    "persistentVolumeReclaimPolicy": "Recycle"
+  }
+}
+EOF
+echo "Created def file for ${volume}";
 done
-
-systemctl restart nfs-server

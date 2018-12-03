@@ -1,0 +1,38 @@
+---
+- name: Run uninstall.yaml
+  import_playbook: /usr/share/ansible/openshift-ansible/playbooks/adhoc/uninstall.yml
+
+- name: Clear /etc/origin
+  hosts: nodes
+  tasks:
+    - name: Remove files from origin
+      shell: "rm -rf /etc/origin/*"
+
+- name: Clear /etc/origin
+  hosts: nfs
+  tasks:
+    - name: Remove files from origin
+      shell: "rm -rf /srv/nfs/*"
+
+- name: Cleanup Nodes
+  hosts: all
+  tasks:
+    - name: Remove Temp Files
+      command: "rm -rf {{ item }}"
+      with_items:
+        - /root/tmp
+        - /root/.ansible/tmp
+        - /home/ec2-user/tmp
+        - /home/ec2-user/.ansible/tmp
+      
+- name: Cleanup Bastion
+  hosts: localhost
+  connection: local
+  tasks:
+    - name: Remove Temp Files
+      command: "rm -rf {{ item }}"
+      with_items:
+        - /root/tmp
+        - /root/.ansible/tmp
+        - /home/ec2-user/tmp
+        - /home/ec2-user/.ansible/tmp
