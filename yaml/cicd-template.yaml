@@ -12,19 +12,19 @@ metadata:
 message: "Use the following credentials for login:\nJenkins: use your OpenShift credentials\nNexus: admin/admin123\nGogs Git Server: gogs/gogs"
 parameters:
 - displayName: BUILD project name
-  value: task-build
+  value: tasks-build
   name: BUILD_PROJECT
   required: true
 - displayName: DEV project name
-  value: task-dev
+  value: tasks-dev
   name: DEV_PROJECT
   required: true
 - displayName: TEST project name
-  value: task-test
+  value: tasks-test
   name: TEST_PROJECT
   required: true
 - displayName: PROD project name
-  value: task-prod
+  value: tasks-prod
   name: PROD_PROJECT
   required: true
 - displayName: Deploy Eclipse Che
