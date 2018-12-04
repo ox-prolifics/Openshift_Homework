@@ -168,7 +168,13 @@ objects:
               }
               stage('Promote to PROD') {
                 steps {
-                  sh "sleep 10"
+                  script {
+                    openshift.withCluster() {
+                      openshift.withProject(env.PROD_PROJECT) {
+                        openshift.tag("${env.DEV_PROJECT}/tasks:latest", "${env.PROD_PROJECT}/tasks:prod")
+                      }
+                    }
+                  }
                 }
               }
               stage('Deploy Prod') {
@@ -176,7 +182,7 @@ objects:
                   script {
                     openshift.withCluster() {
                       openshift.withProject(env.Prod_PROJECT) {
-                        openshift.selector("dc", "tasks").rollout();
+                        openshift.selector("dc", "tasks").rollout().test;
                       }
                     }
                   }
