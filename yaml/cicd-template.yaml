@@ -8,13 +8,8 @@ metadata:
     iconClass: icon-jenkins
     tags: instant-app,jenkins,gogs,nexus,cicd
   name: cicd-dev
-#message: "Use the following credentials for login:\nJenkins: use your OpenShift credentials\nNexus: admin/admin123\nSonarQube: admin/admin\nGogs Git Server: gogs/gogs"
 message: "Use the following credentials for login:\nJenkins: use your OpenShift credentials\nNexus: admin/admin123\nGogs Git Server: gogs/gogs"
 parameters:
-- displayName: BUILD project name
-  value: tasks-build
-  name: BUILD_PROJECT
-  required: true
 - displayName: DEV project name
   value: tasks-dev
   name: DEV_PROJECT
@@ -74,7 +69,7 @@ objects:
   kind: BuildConfig
   metadata:
     annotations:
-      pipeline.alpha.openshift.io/uses: '[{"name": "jenkins-persistent", "namespace": "", "kind": "DeploymentConfig"}]'
+      pipeline.alpha.openshift.io/uses: '[{"name": "jenkins", "namespace": "", "kind": "DeploymentConfig"}]'
     labels:
       app: cicd-pipeline
       name: cicd-pipeline
@@ -93,8 +88,6 @@ objects:
     strategy:
       jenkinsPipelineStrategy:
         env:
-        - name: BUILD_PROJECT
-          value: ${BUILD_PROJECT}
         - name: DEV_PROJECT
           value: ${DEV_PROJECT}
         - name: TEST_PROJECT
@@ -125,7 +118,7 @@ objects:
               }
               stage('Code Analysis') {
                 steps {
-                  sh "sleep 10";
+                  sh "sleep 10"
                 }
               }
               stage('Archive App') {
@@ -138,42 +131,19 @@ objects:
                   sh "cp target/openshift-tasks.war target/ROOT.war"
                   script {
                     openshift.withCluster() {
-                      openshift.withProject(env.BUILD_PROJECT) {
+                      openshift.withProject(env.DEV_PROJECT) {
                         openshift.selector("bc", "tasks").startBuild("--from-file=target/ROOT.war", "--wait=true")
                       }
                     }
                   }
                 }
               }
-              stage('Deploy BUILD') {
-                steps {
-                  script {
-                    openshift.withCluster() {
-                      openshift.withProject(env.BUILD_PROJECT) {
-                        openshift.selector("dc", "tasks").rollout().latest();
-                      }
-                    }
-                  }
-                }
-              }
-              stage('Promote to DEV') {
-                steps {
-                 script {
-                   openshift.withCluster() {
-                     openshift.withProject(env.DEV_PROJECT) {
-                         openshift.tag("${env.BUILD_PROJECT}/tasks:latest", "${env.DEV_PROJECT}/tasks:dev");
-                     }
-                   }
-                 }
-                 sh "sleep 10";
-               }
-              }
               stage('Deploy DEV') {
                 steps {
                   script {
                     openshift.withCluster() {
                       openshift.withProject(env.DEV_PROJECT) {
-                        openshift.selector("dc", "tasks").rollout();
+                        openshift.selector("dc", "tasks").rollout().latest();
                       }
                     }
                   }
@@ -181,14 +151,7 @@ objects:
               }
               stage('Promote to TEST') {
                 steps {
-                  script {
-                    openshift.withCluster() {
-                      openshift.withProject(env.TEST_PROJECT) {
-                        openshift.tag("${env.BUILD_PROJECT}/tasks:latest", "${env.TEST_PROJECT}/tasks:test");
-                      }
-                    }
-                  }
-                  sh "sleep 10";
+                  sh "sleep 10"
                 }
               }
               stage('Deploy TEST') {
@@ -196,7 +159,8 @@ objects:
                   script {
                     openshift.withCluster() {
                       openshift.withProject(env.TEST_PROJECT) {
-                        openshift.selector("dc", "tasks").rollout();
+                        openshift.tag("${env.DEV_PROJECT}/tasks:latest", "${env.TEST_PROJECT}/tasks:test")
+                        openshift.selector("dc", "tasks").rollout().latest();
                       }
                     }
                   }
@@ -204,15 +168,8 @@ objects:
               }
               stage('Promote to PROD') {
                 steps {
-                 script {
-                   openshift.withCluster() {
-                     openshift.withProject(env.PROD_PROJECT) {
-                       openshift.tag("${env.BUILD_PROJECT}/tasks:latest", "${env.PROD_PROJECT}/tasks:prod");
-                     }
-                   }
-                 }
-                 sh "sleep 10";
-               }
+                  sh "sleep 10"
+                }
               }
               stage('Deploy Prod') {
                 steps {
@@ -330,28 +287,20 @@ objects:
           - |           
             # adjust jenkins 
             oc set resources dc/jenkins --limits=cpu=2,memory=2Gi --requests=cpu=100m,memory=512Mi 
-            oc label dc jenkins app=jenkins --overwrite
+            oc label dc jenkins app=jenkins --overwrite 
 
-            # setup build env
-            oc import-image wildfly --from=openshift/wildfly-120-centos7 --confirm -n ${BUILD_PROJECT} 
+            # setup dev env
+            oc import-image wildfly --from=openshift/wildfly-120-centos7 --confirm -n ${DEV_PROJECT} 
             
             if [ "${ENABLE_QUAY}" == "true" ] ; then
               # cicd
               oc create secret generic quay-cicd-secret --from-literal="username=${QUAY_USERNAME}" --from-literal="password=${QUAY_PASSWORD}" -n ${CICD_NAMESPACE}
               oc label secret quay-cicd-secret credential.sync.jenkins.openshift.io=true -n ${CICD_NAMESPACE}
               
-              # build
-              oc create secret docker-registry quay-cicd-secret --docker-server=quay.io --docker-username="${QUAY_USERNAME}" --docker-password="${QUAY_PASSWORD}" --docker-email=cicd@redhat.com -n ${BUILD_PROJECT}
-              oc new-build --name=tasks --image-stream=wildfly:latest --binary=true --push-secret=quay-cicd-secret --to-docker --to='quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest' -n ${BUILD_PROJECT}
-              oc new-app --name=tasks --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest --allow-missing-images -n ${BUILD_PROJECT}
-              oc set triggers dc tasks --remove-all -n ${BUILD_PROJECT}
-              oc patch dc tasks -p '{"spec": {"template": {"spec": {"containers": [{"name": "tasks", "imagePullPolicy": "Always"}]}}}}' -n ${BUILD_PROJECT}
-              oc delete is tasks -n ${BUILD_PROJECT}
-              oc secrets link default quay-cicd-secret --for=pull -n ${BUILD_PROJECT}
-              
               # dev
               oc create secret docker-registry quay-cicd-secret --docker-server=quay.io --docker-username="${QUAY_USERNAME}" --docker-password="${QUAY_PASSWORD}" --docker-email=cicd@redhat.com -n ${DEV_PROJECT}
-              oc new-app --name=tasks --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:stage --allow-missing-images -n ${DEV_PROJECT}
+              oc new-build --name=tasks --image-stream=wildfly:latest --binary=true --push-secret=quay-cicd-secret --to-docker --to='quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest' -n ${DEV_PROJECT}
+              oc new-app --name=tasks --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest --allow-missing-images -n ${DEV_PROJECT}
               oc set triggers dc tasks --remove-all -n ${DEV_PROJECT}
               oc patch dc tasks -p '{"spec": {"template": {"spec": {"containers": [{"name": "tasks", "imagePullPolicy": "Always"}]}}}}' -n ${DEV_PROJECT}
               oc delete is tasks -n ${DEV_PROJECT}
@@ -359,7 +308,7 @@ objects:
               
               # test
               oc create secret docker-registry quay-cicd-secret --docker-server=quay.io --docker-username="${QUAY_USERNAME}" --docker-password="${QUAY_PASSWORD}" --docker-email=cicd@redhat.com -n ${TEST_PROJECT}
-              oc new-app --name=tasks --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:stage --allow-missing-images -n ${TEST_PROJECT}
+              oc new-app --name=tasks --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:test --allow-missing-images -n ${TEST_PROJECT}
               oc set triggers dc tasks --remove-all -n ${TEST_PROJECT}
               oc patch dc tasks -p '{"spec": {"template": {"spec": {"containers": [{"name": "tasks", "imagePullPolicy": "Always"}]}}}}' -n ${TEST_PROJECT}
               oc delete is tasks -n ${TEST_PROJECT}
@@ -373,14 +322,10 @@ objects:
               oc delete is tasks -n ${PROD_PROJECT}
               oc secrets link default quay-cicd-secret --for=pull -n ${PROD_PROJECT}
             else
-              # build
-              oc new-build --name=tasks --image-stream=wildfly:latest --binary=true -n ${BUILD_PROJECT}
-              oc new-app tasks:latest --allow-missing-images -n ${BUILD_PROJECT}
-              oc set triggers dc -l app=tasks --containers=tasks --from-image=tasks:latest --manual -n ${BUILD_PROJECT}
-              
               # dev
-              oc new-app tasks:dev --allow-missing-images -n ${DEV_PROJECT}
-              oc set triggers dc -l app=tasks --containers=tasks --from-image=tasks:dev --manual -n ${DEV_PROJECT}
+              oc new-build --name=tasks --image-stream=wildfly:latest --binary=true -n ${DEV_PROJECT}
+              oc new-app tasks:latest --allow-missing-images -n ${DEV_PROJECT}
+              oc set triggers dc -l app=tasks --containers=tasks --from-image=tasks:latest --manual -n ${DEV_PROJECT}
               
               # test
               oc new-app tasks:test --allow-missing-images -n ${TEST_PROJECT}
@@ -391,33 +336,26 @@ objects:
               oc set triggers dc -l app=tasks --containers=tasks --from-image=tasks:prod --manual -n ${PROD_PROJECT}
             fi
             
-            # build project
-            oc expose dc/tasks --port=8080 -n ${BUILD_PROJECT}
-            oc expose svc/tasks -n ${BUILD_PROJECT}
-            oc set probe dc/tasks --readiness --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=30 --failure-threshold=10 --period-seconds=10 -n ${BUILD_PROJECT}
-            oc set probe dc/tasks --liveness  --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=180 --failure-threshold=10 --period-seconds=10 -n ${BUILD_PROJECT}
-            oc rollout cancel dc/tasks -n ${TEST_PROJECT}
-
             # dev project
             oc expose dc/tasks --port=8080 -n ${DEV_PROJECT}
             oc expose svc/tasks -n ${DEV_PROJECT}
             oc set probe dc/tasks --readiness --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=30 --failure-threshold=10 --period-seconds=10 -n ${DEV_PROJECT}
             oc set probe dc/tasks --liveness  --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=180 --failure-threshold=10 --period-seconds=10 -n ${DEV_PROJECT}
-            oc rollout cancel dc/tasks -n ${BUILD_PROJECT}
+            oc rollout cancel dc/tasks -n ${TEST_PROJECT}
 
             # test project
             oc expose dc/tasks --port=8080 -n ${TEST_PROJECT}
             oc expose svc/tasks -n ${TEST_PROJECT}
             oc set probe dc/tasks --readiness --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=30 --failure-threshold=10 --period-seconds=10 -n ${TEST_PROJECT}
             oc set probe dc/tasks --liveness  --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=180 --failure-threshold=10 --period-seconds=10 -n ${TEST_PROJECT}
-            oc rollout cancel dc/tasks -n ${BUILD_PROJECT}
+            oc rollout cancel dc/tasks -n ${DEV_PROJECT}
 
             # prod project
             oc expose dc/tasks --port=8080 -n ${PROD_PROJECT}
             oc expose svc/tasks -n ${PROD_PROJECT}
             oc set probe dc/tasks --readiness --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=30 --failure-threshold=10 --period-seconds=10 -n ${PROD_PROJECT}
             oc set probe dc/tasks --liveness  --get-url=http://:8080/ws/demo/healthcheck --initial-delay-seconds=180 --failure-threshold=10 --period-seconds=10 -n ${PROD_PROJECT}
-            oc rollout cancel dc/tasks -n ${BUILD_PROJECT}
+            oc rollout cancel dc/tasks -n ${DEV_PROJECT}
             # deploy gogs
             HOSTNAME=$(oc get route jenkins -o template --template='{{.spec.host}}' | sed "s/jenkins-${CICD_NAMESPACE}.//g")
             GOGS_HOSTNAME="gogs-$CICD_NAMESPACE.$HOSTNAME"
@@ -435,6 +373,12 @@ objects:
             fi
             
             sleep 5
+
+            # if [ "${EPHEMERAL}" == "true" ] ; then
+            #   oc new-app -f https://raw.githubusercontent.com/siamaksade/sonarqube/master/sonarqube-template.yml --param=SONARQUBE_MEMORY_LIMIT=6Gi
+            # else
+            #   oc new-app -f https://raw.githubusercontent.com/siamaksade/sonarqube/master/sonarqube-persistent-template.yml --param=SONARQUBE_MEMORY_LIMIT=6Gi
+            # fi
 
             if [ "${DEPLOY_CHE}" == "true" ] ; then
               oc process -f https://raw.githubusercontent.com/minishift/minishift/master/addons/che/templates/che-single-user.yml \
@@ -520,6 +464,6 @@ objects:
           image: openshift/origin:v3.11
           name: cicd-demo-installer-job
           resources: {}
-          terminationMessagePath: /build/termination-log
+          terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
         restartPolicy: Never
