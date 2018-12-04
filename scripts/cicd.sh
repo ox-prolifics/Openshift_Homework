@@ -30,3 +30,4 @@ oc start-build tasks-pipeline
 sleep 600
 oc set resources dc/tasks --requests=cpu=100m -n tasks-prod
 oc autoscale dc/tasks --min 1 --max 5 --cpu-percent=80 -n tasks-prod
+oc rollout latest tasks -n tasks-prod
