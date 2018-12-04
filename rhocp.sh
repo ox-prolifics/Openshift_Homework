@@ -1,5 +1,6 @@
 #!/bin/bash
 
+chmod +x scripts/*
 temp=$1
 if [ "$1" = "uninstall" ]; then
     ansible-playbook /root/rhocp_homework/yaml/cleanup.yaml
